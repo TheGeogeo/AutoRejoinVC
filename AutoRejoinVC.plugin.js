@@ -8,7 +8,6 @@
  */
 
 // Remote raw URL of this plugin for update checks.
-// Example below assumes your repo is public on GitHub:
 const UPDATE_URL = "https://raw.githubusercontent.com/TheGeogeo/AutoRejoinVC/main/AutoRejoinVC.plugin.js";
 
 module.exports = class AutoRejoinVC {
