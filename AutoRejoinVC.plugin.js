@@ -1,7 +1,7 @@
 /**
  * @name AutoRejoinVC
  * @author TheGeogeo
- * @version 1.0.5
+ * @version 1.0.4
  * @description Lock/unlock per voice channel with auto-reconnect. Single locked channel. Large icon (28px). Progressive backoff 500–3000 ms.
  * @website https://github.com/TheGeogeo/AutoRejoinVC
  * @source  https://github.com/TheGeogeo/AutoRejoinVC/blob/main/AutoRejoinVC.plugin.js
@@ -9,7 +9,7 @@
 
 // Remote raw URL of this plugin for update checks.
 // Example below assumes your repo is public on GitHub:
-const UPDATE_URL = "https://raw.githubusercontent.com/TheGeogeo/AutoRejoinVC/refs/heads/main/AutoRejoinVC.plugin.js";
+const UPDATE_URL = "https://raw.githubusercontent.com/TheGeogeo/AutoRejoinVC/main/AutoRejoinVC.plugin.js";
 
 module.exports = class AutoRejoinVC {
   constructor(meta) {
