@@ -1,8 +1,8 @@
 /**
  * @name AutoRejoinVC
  * @author TheGeogeo
- * @version 1.0.4
- * @description Lock/unlock per voice channel with auto-reconnect. Single locked channel. Large icon (28px). Progressive backoff 500–3000 ms.
+ * @version 1.0.5
+ * @description Lock/unlock per voice channel with auto-reconnect. Single locked channel. Progressive backoff 500–3000 ms.
  * @website https://github.com/TheGeogeo/AutoRejoinVC
  * @source  https://github.com/TheGeogeo/AutoRejoinVC/blob/main/AutoRejoinVC.plugin.js
  */
