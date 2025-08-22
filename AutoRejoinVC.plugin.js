@@ -1,7 +1,7 @@
 /**
  * @name AutoRejoinVC
  * @author TheGeogeo
- * @version 1.0.0
+ * @version 1.0.2
  * @description Lock/unlock per voice channel with auto-reconnect. Single locked channel. Large icon (28px). Progressive backoff 500–3000 ms.
  * @website https://github.com/TheGeogeo/AutoRejoinVC
  * @source  https://github.com/TheGeogeo/AutoRejoinVC/blob/main/AutoRejoinVC.plugin.js
@@ -34,6 +34,9 @@ module.exports = class AutoRejoinVC {
     this.maxDelay = 3000;  // ms
     this.retryDelay = this.minDelay;
     this.timer = null;
+    this._lastRetryToastDelay = null;
+    this._lastRetryToastTs = 0;
+    this._lastRouterJump = 0;
   }
 
   log(...a){ BdApi.Logger.log(this.pluginId, ...a); }
@@ -56,20 +59,66 @@ module.exports = class AutoRejoinVC {
     this.retryDelay = this.minDelay;
   }
 
-  async tryJoinVoiceChannel(guildId, channelId){
-    const sels = [
+  // Only report success when the voice join actually happened
+  async tryJoinVoiceChannel(guildId, channelId) {
+    // Guard: already connected
+    if (this.getCurrentVoiceChannelId() === channelId) return true;
+
+    const selectors = [
       `a[data-list-item-id="channels___${guildId}_${channelId}"]`,
       `a[data-list-item-id="channels___${channelId}"]`,
       `a[href="/channels/${guildId}/${channelId}"]`
     ];
-    for(const s of sels){ const el = document.querySelector(s); if(el){ el.click(); return true; } }
-    if(this.Router && guildId && channelId){
-      try{
-        this.Router.transitionTo(`/channels/${guildId}/${channelId}`);
-        await new Promise(r=>setTimeout(r,220));
-        for(const s of sels){ const el = document.querySelector(s); if(el){ el.click(); return true; } }
-      }catch(e){ this.error("Router transition failed:", e); }
+
+    // Helper: click and confirm via VoiceState
+    const clickAndConfirm = async (el) => {
+      try { el.click(); } catch {}
+      // Wait briefly for Discord to process the click and update voice state
+      const joined = await this.waitForVoiceJoin(channelId, 1200);
+      if (joined) return true;
+
+      // As an extra safety, small delay then re-check
+      await new Promise(r => setTimeout(r, 200));
+      return this.getCurrentVoiceChannelId() === channelId;
+    };
+
+    // Try direct click on existing DOM item
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el) {
+        const ok = await clickAndConfirm(el);
+        if (ok) return true;
+      }
     }
+
+    // Fallback: navigate to the channel view, but rate-limit router jumps
+    if (this.Router && guildId && channelId) {
+      const now = Date.now();
+      if (now - this._lastRouterJump > 4000) {
+        try {
+          this.Router.transitionTo(`/channels/${guildId}/${channelId}`);
+          this._lastRouterJump = now;
+        } catch (e) {
+          this.error("Router transition failed:", e);
+        }
+      }
+
+      // Give the UI a moment to render, then try again
+      await new Promise(r => setTimeout(r, 250));
+
+      // Re-check in case something else already connected us
+      if (this.getCurrentVoiceChannelId() === channelId) return true;
+
+      for (const sel of selectors) {
+        const el = document.querySelector(sel);
+        if (el) {
+          const ok = await clickAndConfirm(el);
+          if (ok) return true;
+        }
+      }
+    }
+
+    // Consider it a failure; backoff will increase
     return false;
   }
 
@@ -92,24 +141,36 @@ module.exports = class AutoRejoinVC {
     `;
   }
 
-  createLockButton(guildId, channelId){
+  createLockButton(guildId, channelId) {
     const btn = document.createElement("button");
-    btn.className = "arvc-toggle arvc-unlocked"; // red
+    btn.className = "arvc-toggle arvc-unlocked"; // red state
     btn.type = "button";
-    btn.setAttribute("aria-label","Enable auto-reconnect");
+    btn.setAttribute("aria-label", "Enable auto-reconnect");
     btn.title = "Enable auto-reconnect";
     btn.dataset.guildId = guildId || "";
     btn.dataset.channelId = channelId;
     btn.innerHTML = this.svgIcon();
 
-    btn.addEventListener("click",(e)=>{
-      e.preventDefault(); e.stopPropagation();
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
       const gId = guildId || this.getGuildIdFromChannelId(channelId);
-      if(!gId){ this.UI.showToast("Unable to identify the server (guild).",{type:"danger"}); return; }
-      this.saveLocked({guildId:gId, channelId});
-      this.UI.showToast("Auto-reconnect enabled",{type:"success"});
-      setTimeout(()=>this.tryJoinVoiceChannel(gId, channelId),150);
+      if (!gId) {
+        this.UI.showToast("Unable to identify guild for this channel.", { type: "danger" });
+        return;
+      }
+
+      // Persist the single locked target
+      this.saveLocked({ guildId: gId, channelId });
+      this.UI.showToast("Auto-reconnect enabled", { type: "success" });
+
+      // Do not attempt an immediate join if we are already in the target channel
+      if (this.getCurrentVoiceChannelId() !== channelId) {
+        setTimeout(() => this.tryJoinVoiceChannel(gId, channelId), 150);
+      }
     });
+
     return btn;
   }
 
@@ -167,6 +228,36 @@ module.exports = class AutoRejoinVC {
     });
   }
 
+  // Waits until VoiceState reflects that we joined targetChannelId, or times out
+  waitForVoiceJoin(targetChannelId, timeout = 1200) {
+    return new Promise(resolve => {
+      let settled = false;
+
+      const check = () => {
+        if (settled) return;
+        if (this.getCurrentVoiceChannelId() === targetChannelId) {
+          settled = true;
+          off();
+          resolve(true);
+        }
+      };
+
+      const off = () => {
+        try { this.VoiceStateStore?.removeChangeListener?.(check); } catch {}
+      };
+
+      try { this.VoiceStateStore?.addChangeListener?.(check); } catch {}
+
+      // Failsafe timeout
+      setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        off();
+        resolve(false);
+      }, timeout);
+    });
+  }
+
   /* ---------- Backoff loop (500–3000 ms) ---------- */
 
   startLoop() {
@@ -174,7 +265,7 @@ module.exports = class AutoRejoinVC {
     this.retryDelay = this.minDelay;
 
     const tick = async () => {
-      // if no channel locked: slow loop (minDelay) without attempting to join
+      // No locked channel: idle at min delay
       if (!this.state.locked) {
         this.retryDelay = this.minDelay;
         this.timer = setTimeout(tick, this.retryDelay);
@@ -183,20 +274,42 @@ module.exports = class AutoRejoinVC {
 
       const { guildId, channelId } = this.state.locked;
 
-      // already in the channel -> lightweight check for responsiveness if you leave
+      // Already in the target channel: keep delay at minimum and do nothing
       if (this.getCurrentVoiceChannelId() === channelId) {
-        this.retryDelay = this.minDelay; // reset
+        this.retryDelay = this.minDelay;
         this.timer = setTimeout(tick, this.retryDelay);
         return;
       }
 
-      // tentative de reconnexion
+      // Attempt to reconnect
       const ok = await this.tryJoinVoiceChannel(guildId, channelId);
 
-      // progressive backoff on failure, reset on success
+      // Progressive backoff on failure, reset on success
+      const prevDelay = this.retryDelay;
       this.retryDelay = ok
         ? this.minDelay
         : Math.min(Math.floor(this.retryDelay * 1.7), this.maxDelay);
+
+      // Show a toast on failure indicating the next retry delay (rate-limited)
+      if (!ok) {
+        const now = Date.now();
+        const shouldToast =
+          this.retryDelay !== this._lastRetryToastDelay ||
+          (now - (this._lastRetryToastTs || 0)) > 15000; // at most every 15s at max delay
+
+        if (shouldToast) {
+          this.UI.showToast(`Reconnect failed. Next retry in ${this.retryDelay} ms`, {
+            type: "warning",
+            timeout: Math.min(5000, this.retryDelay) // keep it readable
+          });
+          this._lastRetryToastDelay = this.retryDelay;
+          this._lastRetryToastTs = now;
+        }
+      } else {
+        // On success, clear toast memory so future failures can notify again
+        this._lastRetryToastDelay = null;
+        this._lastRetryToastTs = 0;
+      }
 
       this.timer = setTimeout(tick, this.retryDelay);
     };
