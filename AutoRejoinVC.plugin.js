@@ -1,7 +1,7 @@
 /**
  * @name AutoRejoinVC
  * @author TheGeogeo
- * @version 1.0.5
+ * @version 1.0.6
  * @description Lock/unlock per voice channel with auto-reconnect. Single locked channel. Progressive backoff 500–3000 ms.
  * @website https://github.com/TheGeogeo/AutoRejoinVC
  * @source  https://github.com/TheGeogeo/AutoRejoinVC/blob/main/AutoRejoinVC.plugin.js
@@ -18,22 +18,22 @@ module.exports = class AutoRejoinVC {
     this.cssId = "auto-rejoin-vc-css";
     this.observer = null;
 
-    // BD helpers
+    // BD helpers.
     this.Webpack = BdApi.Webpack;
     this.Data = BdApi.Data;
     this.DOM = BdApi.DOM;
     this.UI = BdApi.UI;
 
-    // Stores & Discord utils
+    // Stores & Discord utils.
     this.UserStore = this.Webpack.getStore("UserStore");
     this.ChannelStore = this.Webpack.getStore("ChannelStore");
     this.VoiceStateStore = this.Webpack.getStore("VoiceStateStore");
     this.Router = this.Webpack.getModule(m => m?.transitionTo && m?.replaceWith);
 
-    // Single locked channel
+    // Single locked channel.
     this.state = { locked: this.Data.load(this.pluginId, "locked") || null };
 
-    // Backoff
+    // Backoff.
     this.minDelay = 500;   // ms
     this.maxDelay = 3000;  // ms
     this.retryDelay = this.minDelay;
@@ -59,13 +59,13 @@ module.exports = class AutoRejoinVC {
     this.state.locked = target;
     this.Data.save(this.pluginId, "locked", target);
     this.refreshAllSlots();
-    // reset backoff on each state change
+    // Reset backoff on each state change.
     this.retryDelay = this.minDelay;
   }
 
-  // Only report success when the voice join actually happened
+  // Only report success when the voice join actually happened.
   async tryJoinVoiceChannel(guildId, channelId) {
-    // Guard: already connected
+    // Guard: already connected.
     if (this.getCurrentVoiceChannelId() === channelId) return true;
 
     const selectors = [
@@ -74,19 +74,19 @@ module.exports = class AutoRejoinVC {
       `a[href="/channels/${guildId}/${channelId}"]`
     ];
 
-    // Helper: click and confirm via VoiceState
+    // Helper: click and confirm via VoiceState.
     const clickAndConfirm = async (el) => {
       try { el.click(); } catch {}
-      // Wait briefly for Discord to process the click and update voice state
+      // Wait briefly for Discord to process the click and update voice state.
       const joined = await this.waitForVoiceJoin(channelId, 1200);
       if (joined) return true;
 
-      // As an extra safety, small delay then re-check
+      // As an extra safety, small delay then check again.
       await new Promise(r => setTimeout(r, 200));
       return this.getCurrentVoiceChannelId() === channelId;
     };
 
-    // Try direct click on existing DOM item
+    // Try direct click on existing DOM item.
     for (const sel of selectors) {
       const el = document.querySelector(sel);
       if (el) {
@@ -95,7 +95,7 @@ module.exports = class AutoRejoinVC {
       }
     }
 
-    // Fallback: navigate to the channel view, but rate-limit router jumps
+    // Fallback: navigate to the channel view, but rate-limit router jumps.
     if (this.Router && guildId && channelId) {
       const now = Date.now();
       if (now - this._lastRouterJump > 4000) {
@@ -107,10 +107,10 @@ module.exports = class AutoRejoinVC {
         }
       }
 
-      // Give the UI a moment to render, then try again
+      // Give the UI a moment to render, then try again.
       await new Promise(r => setTimeout(r, 250));
 
-      // Re-check in case something else already connected us
+      // Check again in case something else already connected us.
       if (this.getCurrentVoiceChannelId() === channelId) return true;
 
       for (const sel of selectors) {
@@ -122,7 +122,7 @@ module.exports = class AutoRejoinVC {
       }
     }
 
-    // Consider it a failure; backoff will increase
+    // Consider it a failure; backoff will increase.
     return false;
   }
 
@@ -165,11 +165,11 @@ module.exports = class AutoRejoinVC {
         return;
       }
 
-      // Persist the single locked target
+      // Persist the single locked target.
       this.saveLocked({ guildId: gId, channelId });
       this.UI.showToast("Auto-reconnect enabled", { type: "success" });
 
-      // Do not attempt an immediate join if we are already in the target channel
+      // Do not attempt an immediate join if we are already in the target channel.
       if (this.getCurrentVoiceChannelId() !== channelId) {
         setTimeout(() => this.tryJoinVoiceChannel(gId, channelId), 150);
       }
@@ -232,7 +232,7 @@ module.exports = class AutoRejoinVC {
     });
   }
 
-  // Waits until VoiceState reflects that we joined targetChannelId, or times out
+  // Waits until VoiceState reflects that we joined targetChannelId, or times out.
   waitForVoiceJoin(targetChannelId, timeout = 1200) {
     return new Promise(resolve => {
       let settled = false;
@@ -252,7 +252,7 @@ module.exports = class AutoRejoinVC {
 
       try { this.VoiceStateStore?.addChangeListener?.(check); } catch {}
 
-      // Failsafe timeout
+      // Failsafe timeout.
       setTimeout(() => {
         if (settled) return;
         settled = true;
@@ -269,7 +269,7 @@ module.exports = class AutoRejoinVC {
     this.retryDelay = this.minDelay;
 
     const tick = async () => {
-      // No locked channel: idle at min delay
+      // No locked channel: idle at min delay.
       if (!this.state.locked) {
         this.retryDelay = this.minDelay;
         this.timer = setTimeout(tick, this.retryDelay);
@@ -278,23 +278,23 @@ module.exports = class AutoRejoinVC {
 
       const { guildId, channelId } = this.state.locked;
 
-      // Already in the target channel: keep delay at minimum and do nothing
+      // Already in the target channel: keep delay at minimum and do nothing.
       if (this.getCurrentVoiceChannelId() === channelId) {
         this.retryDelay = this.minDelay;
         this.timer = setTimeout(tick, this.retryDelay);
         return;
       }
 
-      // Attempt to reconnect
+      // Attempt to reconnect.
       const ok = await this.tryJoinVoiceChannel(guildId, channelId);
 
-      // Progressive backoff on failure, reset on success
+      // Progressive backoff on failure, reset on success.
       const prevDelay = this.retryDelay;
       this.retryDelay = ok
         ? this.minDelay
         : Math.min(Math.floor(this.retryDelay * 1.7), this.maxDelay);
 
-      // Show a toast on failure indicating the next retry delay (rate-limited)
+      // Show a toast on failure indicating the next retry delay (rate-limited).
       if (!ok) {
         const now = Date.now();
         const shouldToast =
@@ -310,7 +310,7 @@ module.exports = class AutoRejoinVC {
           this._lastRetryToastTs = now;
         }
       } else {
-        // On success, clear toast memory so future failures can notify again
+        // On success, clear toast memory so future failures can notify again.
         this._lastRetryToastDelay = null;
         this._lastRetryToastTs = 0;
       }
@@ -337,7 +337,7 @@ module.exports = class AutoRejoinVC {
     const name = "AutoRejoinVC";
     const current = this.currentVersion;
 
-    // 1) Prefer BetterDiscord's built-in PluginUpdater (if present)
+    // 1) Prefer BetterDiscord's built-in PluginUpdater (if present).
     const BDUpdater = window.PluginUpdater || BdApi?.PluginUpdater;
     if (BDUpdater && typeof BDUpdater.checkForUpdate === "function") {
       try {
@@ -349,7 +349,7 @@ module.exports = class AutoRejoinVC {
       }
     }
 
-    // 2) Fallback to ZeresPluginLibrary's PluginUpdater (if user has it)
+    // 2) Fallback to ZeresPluginLibrary's PluginUpdater (if user has it).
     const ZLib = window.ZeresPluginLibrary || window.ZLibrary || global?.ZeresPluginLibrary;
     if (ZLib?.PluginUpdater?.checkForUpdate) {
       try {
@@ -360,8 +360,8 @@ module.exports = class AutoRejoinVC {
       }
     }
 
-    // 3) Last resort: manual compare using BdApi.Net.fetch
-    //    Looks for a semantic version like "1.2.3" in the remote file.
+    // 3) Last resort: manual compare using BdApi.Net.fetch.
+    // Looks for a semantic version like "1.2.3" in the remote file.
     const doManualCheck = async () => {
       try {
         const res = await BdApi.Net.fetch(UPDATE_URL, { method: "GET" });
@@ -455,11 +455,11 @@ module.exports = class AutoRejoinVC {
   removeStyles(){ this.DOM.removeStyle(this.cssId); }
 
   getSettingsPanel() {
-    // ---- Root
+    // ---- Root.
     const wrap = document.createElement("div");
     wrap.className = "arvc-settings arvc-light";
 
-    // ---- scoped CSS for the panel (white background + strong contrast)
+    // ---- scoped CSS for the panel (white background + strong contrast).
     const style = document.createElement("style");
     style.textContent = `
       .arvc-settings.arvc-light {
@@ -545,22 +545,22 @@ module.exports = class AutoRejoinVC {
     `;
     wrap.appendChild(style);
 
-    // Stores utiles
+    // Stores utiles.
     const GuildStore = this.Webpack.getStore?.("GuildStore");
 
-    // Infos friendly
+    // Infos friendly.
     const locked = this.state.locked;
     const ch = locked ? this.ChannelStore?.getChannel?.(locked.channelId) : null;
     const g  = locked ? GuildStore?.getGuild?.(locked.guildId) : null;
     const channelLabel = ch?.name ? `#${ch.name}` : (locked ? `#${locked.channelId}` : "—");
     const guildLabel   = g?.name  ? g.name        : (locked ? `${locked.guildId}` : "—");
 
-    // ---- Titre
+    // ---- Titre.
     const title = document.createElement("div");
     title.className = "arvc-title";
     wrap.appendChild(title);
 
-    // ---- Carte Statut
+    // ---- Carte Statut.
     const status = document.createElement("div");
     status.className = "arvc-card arvc-status";
 
@@ -600,11 +600,11 @@ module.exports = class AutoRejoinVC {
     status.appendChild(statusRight);
     wrap.appendChild(status);
 
-    // ---- Carte Backoff
+    // ---- Carte Backoff.
     const backoff = document.createElement("div");
     backoff.className = "arvc-card";
 
-    // Header
+    // Header.
     const head = document.createElement("div");
     head.className = "arvc-backoff-head";
     const headTitle = document.createElement("div");
@@ -617,7 +617,7 @@ module.exports = class AutoRejoinVC {
     head.appendChild(headCurrent);
     backoff.appendChild(head);
 
-    // Inputs
+    // Inputs.
     const row = document.createElement("div"); row.className = "arvc-row";
 
     const fieldMin = document.createElement("div"); fieldMin.className = "arvc-field";
@@ -637,7 +637,7 @@ module.exports = class AutoRejoinVC {
     row.appendChild(fieldMin); row.appendChild(fieldMax);
     backoff.appendChild(row);
 
-    // Actions (Reset under inputs + Apply on the right)
+    // Actions (Reset under inputs + Apply on the right).
     const actions = document.createElement("div");
     actions.className = "arvc-actions";
 
@@ -667,7 +667,7 @@ module.exports = class AutoRejoinVC {
     actions.appendChild(btnApply);
     backoff.appendChild(actions);
 
-    // Hint
+    // Hint.
     const hint = document.createElement("div");
     hint.className = "arvc-muted";
     hint.style.fontSize = "12px";
