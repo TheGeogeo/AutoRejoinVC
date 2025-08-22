@@ -1,16 +1,21 @@
 /**
  * @name AutoRejoinVC
  * @author TheGeogeo
- * @version 1.0.2
+ * @version 1.0.4
  * @description Lock/unlock per voice channel with auto-reconnect. Single locked channel. Large icon (28px). Progressive backoff 500–3000 ms.
  * @website https://github.com/TheGeogeo/AutoRejoinVC
  * @source  https://github.com/TheGeogeo/AutoRejoinVC/blob/main/AutoRejoinVC.plugin.js
  */
 
+// Remote raw URL of this plugin for update checks.
+// Example below assumes your repo is public on GitHub:
+const UPDATE_URL = "https://raw.githubusercontent.com/TheGeogeo/AutoRejoinVC/main/AutoRejoinVC.plugin.js";
+
 module.exports = class AutoRejoinVC {
   constructor(meta) {
     this.meta = meta;
     this.pluginId = "AutoRejoinVC";
+    this.currentVersion = meta?.version || "0.0.0";
     this.cssId = "auto-rejoin-vc-css";
     this.observer = null;
 
@@ -322,6 +327,67 @@ module.exports = class AutoRejoinVC {
     this.timer = null;
   }
 
+  /* ---------- Update Checker ---------- */
+
+  /**
+   * Check for updates and show BD's update banner if a newer version is available.
+   * Tries BetterDiscord's built-in PluginUpdater first, then ZeresPluginLibrary,
+   * and finally falls back to a simple fetch+compare.
+   */
+  checkForUpdates() {
+    const name = "AutoRejoinVC";
+    const current = this.currentVersion;
+
+    // 1) Prefer BetterDiscord's built-in PluginUpdater (if present)
+    const BDUpdater = window.PluginUpdater || BdApi?.PluginUpdater;
+    if (BDUpdater && typeof BDUpdater.checkForUpdate === "function") {
+      try {
+        // Accepts either a BetterDiscord addon id or a direct raw URL.
+        BDUpdater.checkForUpdate(name, current, UPDATE_URL);
+        return;
+      } catch (e) {
+        try { BdApi.Logger.warn(this.pluginId, "BD PluginUpdater failed:", e); } catch {}
+      }
+    }
+
+    // 2) Fallback to ZeresPluginLibrary's PluginUpdater (if user has it)
+    const ZLib = window.ZeresPluginLibrary || window.ZLibrary || global?.ZeresPluginLibrary;
+    if (ZLib?.PluginUpdater?.checkForUpdate) {
+      try {
+        ZLib.PluginUpdater.checkForUpdate(name, current, UPDATE_URL);
+        return;
+      } catch (e) {
+        try { BdApi.Logger.warn(this.pluginId, "ZLib PluginUpdater failed:", e); } catch {}
+      }
+    }
+
+    // 3) Last resort: manual compare using BdApi.Net.fetch
+    //    Looks for a semantic version like "1.2.3" in the remote file.
+    const doManualCheck = async () => {
+      try {
+        const res = await BdApi.Net.fetch(UPDATE_URL, { method: "GET" });
+        if (!res || !res.text) return;
+        const text = await res.text();
+        const match = text.match(/@version\s+([0-9]+\.[0-9]+\.[0-9]+)/i) || text.match(/["']([0-9]+\.[0-9]+\.[0-9]+)["']/);
+        if (!match) return;
+        const remote = String(match[1]);
+        const newer = (a, b) => {
+          const pa = a.split(".").map(n => parseInt(n, 10) || 0);
+          const pb = b.split(".").map(n => parseInt(n, 10) || 0);
+          for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pb[i] > pa[i];
+          return false;
+        };
+        if (newer(current, remote)) {
+          // Show a clear banner-like toast. BD's native banner is nicer, but this is a safe fallback.
+          BdApi.UI.showToast(`${name} update available: ${current} → ${remote}`, { type: "info", timeout: 6000 });
+        }
+      } catch (e) {
+        try { BdApi.Logger.warn(this.pluginId, "Manual update check failed:", e); } catch {}
+      }
+    };
+    doManualCheck();
+  }
+
   /* ---------- Lifecycle ---------- */
 
   start(){
@@ -329,6 +395,8 @@ module.exports = class AutoRejoinVC {
     this.startObserver();
     this.startLoop();
     this.log("Started (backoff 500–3000 ms)");
+
+    this.checkForUpdates();
   }
 
   stop(){
